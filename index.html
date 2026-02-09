@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calendar</title>
+<style>
+/* === E-ink design principles ===
+ * - System fonts only (no web font loading/FOIT)
+ * - Borders over fills (minimise repaint area)
+ * - No animations except the clock hands (stepped, minimal)
+ * - No shadows, gradients, or transparency
+ * - High contrast: #000 on #f5f5f5
+ * - No hover states (touch device)
+ */
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #f5f5f5;
+  color: #000;
+  font-family: sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* === Landscape rotation wrapper ===
+ * Rotates the entire UI 90° clockwise.
+ * Width/height are swapped so layout engine sees landscape dimensions.
+ * Touch coordinates are remapped in JS.
+ */
+.landscape-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vh;
+  height: 100vw;
+  transform: rotate(90deg);
+  transform-origin: top left;
+  /* Shift into view after rotation */
+  margin-left: 100vw;
+  overflow: hidden;
+}
+
+/* === View system === */
+.view {
+  display: none;
+  width: 100%;
+  height: 100%;
+}
+
+.view.active {
+  display: flex;
+}
+
+/* === Main calendar/clock view === */
+.main-view {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 20px;
+}
+
+/* Left panel: clock + date */
+.left-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 45%;
+  padding-right: 20px;
+}
+
+/* Right panel: calendars */
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 55%;
+  gap: 16px;
+}
+
+/* === Analogue clock ===
+ * Pure CSS rendering with transform: rotate().
+ * Stepped animation driven by CSS, recalibrated by JS every 15 mins.
+ */
+.clock {
+  position: relative;
+  width: 260px;
+  height: 260px;
+  border: 4px solid #000;
+  border-radius: 50%;
+}
+
+/* Quarter-hour markers */
+.clock-marker {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: 0 0;
+}
+
+.clock-marker::after {
+  content: '';
+  display: block;
+  position: absolute;
+  background: #000;
+}
+
+/* 12 o'clock */
+.clock-marker.m12 { transform: translate(-50%, -50%) rotate(0deg); }
+.clock-marker.m12::after { width: 4px; height: 20px; top: -128px; left: -2px; }
+
+/* 3 o'clock */
+.clock-marker.m3 { transform: translate(-50%, -50%) rotate(90deg); }
+.clock-marker.m3::after { width: 4px; height: 20px; top: -128px; left: -2px; }
+
+/* 6 o'clock */
+.clock-marker.m6 { transform: translate(-50%, -50%) rotate(180deg); }
+.clock-marker.m6::after { width: 4px; height: 20px; top: -128px; left: -2px; }
+
+/* 9 o'clock */
+.clock-marker.m9 { transform: translate(-50%, -50%) rotate(270deg); }
+.clock-marker.m9::after { width: 4px; height: 20px; top: -128px; left: -2px; }
+
+/* Clock hands - common */
+.clock-hand {
+  position: absolute;
+  bottom: 50%;
+  left: 50%;
+  transform-origin: bottom center;
+  background: #000;
+  border-radius: 2px;
+}
+
+/* Hour hand */
+.hour-hand {
+  width: 6px;
+  height: 75px;
+  margin-left: -3px;
+}
+
+/* Minute hand */
+.minute-hand {
+  width: 4px;
+  height: 105px;
+  margin-left: -2px;
+}
+
+/* Centre dot */
+.clock-centre {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  background: #000;
+  border-radius: 50%;
+}
+
+/* === Stepped clock animations ===
+ * Minute hand: 15 steps over 900 seconds (15 minutes)
+ * Hour hand: 3 steps over 900 seconds (moves every 5 mins, 2.5° per step)
+ */
+@keyframes minute-rotate {
+  from { transform: rotate(var(--minute-start)); }
+  to   { transform: rotate(var(--minute-end)); }
+}
+
+@keyframes hour-rotate {
+  from { transform: rotate(var(--hour-start)); }
+  to   { transform: rotate(var(--hour-end)); }
+}
+
+.minute-hand.animated {
+  animation: minute-rotate 900s steps(15, end) 1;
+  animation-fill-mode: forwards;
+  animation-delay: var(--minute-delay);
+}
+
+.hour-hand.animated {
+  animation: hour-rotate 900s steps(3, end) 1;
+  animation-fill-mode: var(--hour-fill, forwards);
+  animation-delay: var(--hour-delay);
+}
+
+/* === Date display === */
+.date-display {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.date-day-name {
+  font-size: 22px;
+  letter-spacing: 0.05em;
+}
+
+.date-full {
+  font-size: 32px;
+  font-weight: bold;
+  margin-top: 4px;
+}
+
+/* === Calendar grids === */
+.calendar {
+  width: 100%;
+  max-width: 340px;
+}
+
+.calendar-header {
+  text-align: center;
+  font-size: 18px;
+  font-weight: bold;
+  padding-bottom: 6px;
+  border-bottom: 3px solid #000;
+  margin-bottom: 0;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1;
+  border-left: 1px solid #000;
+  border-right: 1px solid #000;
+}
+
+.calendar-grid .day-label {
+  font-weight: bold;
+  padding: 5px 0;
+  font-size: 13px;
+  border-bottom: 2px solid #000;
+  border-right: 1px solid #ccc;
+}
+
+.calendar-grid .day-label:last-child {
+  border-right: none;
+}
+
+.calendar-grid .day-cell {
+  padding: 5px 2px;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid #ccc;
+  border-right: 1px solid #ccc;
+}
+
+.calendar-grid .day-cell:nth-child(7n) {
+  border-right: none;
+}
+
+.calendar-grid .day-cell.empty {
+  /* empty cells for padding */
+}
+
+.calendar-grid .day-cell.today {
+  font-weight: bold;
+  background: #000;
+  color: #fff;
+}
+
+.calendar-grid .day-cell.past {
+  color: #999;
+}
+
+/* Bottom border for the last row */
+.calendar-grid .day-cell:nth-last-child(-n+7) {
+  /* Already has border-bottom from .day-cell */
+}
+
+/* Ensure full bottom border on the grid */
+.calendar-grid {
+  border-bottom: 1px solid #000;
+}
+
+/* === Secondary views === */
+.secondary-view {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.secondary-view h2 {
+  font-size: 28px;
+  margin-bottom: 20px;
+}
+
+.secondary-view .back-hint {
+  position: absolute;
+  bottom: 20px;
+  font-size: 14px;
+  color: #666;
+}
+
+/* === View indicator dots === */
+.view-dots {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+}
+
+.view-dot {
+  width: 10px;
+  height: 10px;
+  border: 3px solid #000;
+  border-radius: 50%;
+}
+
+.view-dot.active {
+  background: #000;
+}
+</style>
+</head>
+<body>
+
+<div class="landscape-wrap" id="root">
+
+  <!-- View indicator dots -->
+  <div class="view-dots" id="viewDots"></div>
+
+  <!-- Main view: clock + calendar -->
+  <div class="view main-view active" id="view-0">
+    <div class="left-panel">
+      <div class="clock" id="clock">
+        <div class="clock-marker m12"></div>
+        <div class="clock-marker m3"></div>
+        <div class="clock-marker m6"></div>
+        <div class="clock-marker m9"></div>
+        <div class="clock-hand hour-hand" id="hourHand"></div>
+        <div class="clock-hand minute-hand" id="minuteHand"></div>
+        <div class="clock-centre"></div>
+      </div>
+      <div class="date-display">
+        <div class="date-day-name" id="dateDayName"></div>
+        <div class="date-full" id="dateFull"></div>
+      </div>
+    </div>
+    <div class="right-panel">
+      <div class="calendar" id="cal-current"></div>
+      <div class="calendar" id="cal-next"></div>
+    </div>
+  </div>
+
+  <!-- Placeholder secondary view (e.g. Octopus Agile rates) -->
+  <div class="view secondary-view" id="view-1">
+    <h2>Octopus Agile</h2>
+    <p>Rates view — coming soon.</p>
+    <div class="back-hint">Tap to return, or auto-returns in 30s</div>
+  </div>
+
+</div>
+
+<script>
+/* =============================================================
+ * Kindle E-ink Calendar & Clock
+ * 
+ * Design goals:
+ * - Minimal JS execution (runs every 15 mins for recalibration)
+ * - Clock hands driven by CSS stepped animation
+ * - Calendar re-renders only when date changes
+ * - Touch to cycle views, auto-return after 30s
+ * - ES5-safe for Kindle 11th gen browser compatibility
+ * ============================================================= */
+
+(function() {
+  'use strict';
+
+  // ── Constants ──
+  var RECALIBRATE_MS   = 900000;  // 15 minutes in ms
+  var AUTO_RETURN_MS   = 30000;   // 30 seconds
+  var DAYS_SHORT       = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  var DAYS_FULL        = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var MONTHS_FULL      = ['January', 'February', 'March', 'April', 'May', 'June',
+                          'July', 'August', 'September', 'October', 'November', 'December'];
+
+  // ── State ──
+  var currentView      = 0;
+  var totalViews       = 2;
+  var autoReturnTimer  = null;
+  var recalibrateTimer = null;
+  var lastDateStr      = '';
+
+  // ── DOM refs ──
+  var hourHand   = document.getElementById('hourHand');
+  var minuteHand = document.getElementById('minuteHand');
+  var dateDayEl  = document.getElementById('dateDayName');
+  var dateFullEl = document.getElementById('dateFull');
+  var calCurrent = document.getElementById('cal-current');
+  var calNext    = document.getElementById('cal-next');
+  var viewDots   = document.getElementById('viewDots');
+  var root       = document.getElementById('root');
+
+  // ── Utility ──
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+  // ── Clock ──
+  // Each minute = 6°, each hour = 30°, each minute adds 0.5° to hour
+  function getMinuteAngle(m) { return m * 6; }
+  function getHourAngle(h, m)  { return (h % 12) * 30 + m * 0.5; }
+
+  function setClock() {
+    var now = new Date();
+    var h   = now.getHours();
+    var m   = now.getMinutes();
+
+    // Work out where we are in the current 15-minute block
+    var blockMinute  = m % 15;                        // 0-14 within the block
+    var blockStart   = m - blockMinute;                // minute at start of block
+    var blockEnd     = blockStart + 15;                // minute at end of block
+
+    // Minute hand angles
+    var minuteStartAngle = getMinuteAngle(blockStart);
+    var minuteEndAngle   = getMinuteAngle(blockEnd);
+
+    // Hour hand angles (accounts for minute position)
+    var hourStartAngle = getHourAngle(h, blockStart);
+    var hourEndAngle   = getHourAngle(h, blockEnd);
+
+    // How far into the 900s animation are we? (negative delay = skip ahead)
+    var elapsedInBlock = blockMinute * 60 + now.getSeconds();
+    var delayOffset    = '-' + elapsedInBlock + 's';
+
+    // Remove animated class to force re-trigger
+    hourHand.className   = 'clock-hand hour-hand';
+    minuteHand.className = 'clock-hand minute-hand';
+
+    // Set CSS custom properties
+    var rs = document.documentElement.style;
+    rs.setProperty('--minute-start', minuteStartAngle + 'deg');
+    rs.setProperty('--minute-end',   minuteEndAngle + 'deg');
+    rs.setProperty('--minute-delay', delayOffset);
+    rs.setProperty('--hour-start',   hourStartAngle + 'deg');
+    rs.setProperty('--hour-end',     hourEndAngle + 'deg');
+    rs.setProperty('--hour-delay',   delayOffset);
+
+    // Force reflow then re-add animation class
+    void hourHand.offsetWidth;
+    hourHand.className   = 'clock-hand hour-hand animated';
+    minuteHand.className = 'clock-hand minute-hand animated';
+  }
+
+  // ── Calendar rendering ──
+  function renderCalendar(container, year, month, highlightToday) {
+    // month is 0-indexed
+    var firstDay = new Date(year, month, 1);
+    var daysInMonth = new Date(year, month + 1, 0).getDate();
+    // getDay() returns 0=Sun. Convert to Mon=0
+    var startDow = (firstDay.getDay() + 6) % 7;
+
+    var today = new Date();
+    var todayDate = today.getDate();
+    var todayMonth = today.getMonth();
+    var todayYear = today.getFullYear();
+
+    var html = '<div class="calendar-header">' + MONTHS_FULL[month] + ' ' + year + '</div>';
+    html += '<div class="calendar-grid">';
+
+    // Day labels
+    for (var d = 0; d < 7; d++) {
+      html += '<div class="day-label">' + DAYS_SHORT[d] + '</div>';
+    }
+
+    // Empty cells before first day
+    for (var e = 0; e < startDow; e++) {
+      html += '<div class="day-cell empty"></div>';
+    }
+
+    // Day cells
+    for (var i = 1; i <= daysInMonth; i++) {
+      var classes = 'day-cell';
+      if (highlightToday && i === todayDate && month === todayMonth && year === todayYear) {
+        classes += ' today';
+      }
+      if (highlightToday && month === todayMonth && year === todayYear && i < todayDate) {
+        classes += ' past';
+      }
+      html += '<div class="' + classes + '">' + i + '</div>';
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  function renderCalendars() {
+    var now = new Date();
+    var year = now.getFullYear();
+    var month = now.getMonth();
+
+    renderCalendar(calCurrent, year, month, true);
+
+    // Next month
+    var nextMonth = month + 1;
+    var nextYear = year;
+    if (nextMonth > 11) { nextMonth = 0; nextYear++; }
+    renderCalendar(calNext, nextYear, nextMonth, false);
+  }
+
+  // ── Date display ──
+  function renderDate() {
+    var now = new Date();
+    var dateStr = now.getFullYear() + '-' + pad(now.getMonth()) + '-' + pad(now.getDate());
+
+    // Only re-render if the date actually changed
+    if (dateStr === lastDateStr) return;
+    lastDateStr = dateStr;
+
+    dateDayEl.textContent = DAYS_FULL[now.getDay()];
+    dateFullEl.textContent = now.getDate() + ' ' + MONTHS_FULL[now.getMonth()] + ' ' + now.getFullYear();
+
+    // Re-render calendars when the date changes
+    renderCalendars();
+  }
+
+  // ── View switching ──
+  function renderDots() {
+    var html = '';
+    for (var i = 0; i < totalViews; i++) {
+      html += '<div class="view-dot' + (i === currentView ? ' active' : '') + '"></div>';
+    }
+    viewDots.innerHTML = html;
+  }
+
+  function switchView(index) {
+    var views = document.querySelectorAll('.view');
+    for (var i = 0; i < views.length; i++) {
+      if (i === index) {
+        views[i].className = views[i].className.replace(' active', '') + ' active';
+      } else {
+        views[i].className = views[i].className.replace(' active', '');
+      }
+    }
+    currentView = index;
+    renderDots();
+  }
+
+  function nextView() {
+    var next = (currentView + 1) % totalViews;
+    switchView(next);
+    startAutoReturn();
+  }
+
+  function startAutoReturn() {
+    clearTimeout(autoReturnTimer);
+    if (currentView !== 0) {
+      autoReturnTimer = setTimeout(function() {
+        switchView(0);
+      }, AUTO_RETURN_MS);
+    }
+  }
+
+  // ── Touch handling ──
+  // Tap anywhere to cycle between views.
+  // CSS transforms don't affect DOM hit testing, so no coordinate remapping needed.
+  function onTouch(e) {
+    // Prevent double-firing
+    if (e.type === 'touchstart') {
+      e.preventDefault();
+    }
+    nextView();
+  }
+
+  root.addEventListener('touchstart', onTouch, false);
+  root.addEventListener('click', onTouch, false);
+
+  // ── Recalibration ──
+  // Runs every 15 minutes: resets clock animation, checks date change
+  function recalibrate() {
+    setClock();
+    renderDate();
+  }
+
+  // ── Align recalibration to the next 15-minute boundary ──
+  function scheduleRecalibration() {
+    var now = new Date();
+    var m = now.getMinutes();
+    var s = now.getSeconds();
+    var ms = now.getMilliseconds();
+
+    // Time until next 15-min boundary
+    var minutesUntil = 15 - (m % 15);
+    var msUntil = (minutesUntil * 60 - s) * 1000 - ms;
+
+    // First recalibration aligns to the boundary, then every 15 mins
+    setTimeout(function() {
+      recalibrate();
+      recalibrateTimer = setInterval(recalibrate, RECALIBRATE_MS);
+    }, msUntil);
+  }
+
+  // ── Initialise ──
+  function init() {
+    renderDate();
+    setClock();
+    renderDots();
+    scheduleRecalibration();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
