@@ -387,12 +387,18 @@ html, body {
   // ── Landscape wrapper sizing ──
   // Viewport units (vh/vw) are not supported. Set dimensions in pixels
   // and update margin-left for the rotation shift.
+  // On Kindle WebKit 534.26, window.innerWidth/innerHeight return 0
+  // during initial script execution — we must defer or use fallbacks.
   function initLandscape() {
-    var w = window.innerWidth;
-    var h = window.innerHeight;
+    var w = window.innerWidth || document.documentElement.clientWidth || 0;
+    var h = window.innerHeight || document.documentElement.clientHeight || 0;
+
+    if (w === 0 || h === 0) return false;
+
     root.style.width = h + 'px';
     root.style.height = w + 'px';
     root.style.marginLeft = w + 'px';
+    return true;
   }
 
   // ── Clock ──
@@ -625,7 +631,11 @@ html, body {
 
   // ── Initialise ──
   function init() {
-    initLandscape();
+    // Try immediately — may fail on Kindle (returns 0 during parse)
+    if (!initLandscape()) {
+      // Defer until layout is available
+      window.addEventListener('load', initLandscape, false);
+    }
     renderDate();
     setClock();
     renderDots();
