@@ -1,456 +1,206 @@
 /* =============================================================
- * Kindle Dashboard — Debug Tools
+ * Kindle Dashboard — Beacon-only Diagnostics (v2)
  *
- * Load this FIRST (blocking) in <head> to capture everything:
- *   <script src="debug.js"></script>
+ * No UI — sends diagnostics purely via Image beacon to a POST bin.
+ * Does not create any DOM elements or intercept touch events.
  *
- * Comment out or remove the <script> tag to disable.
- *
- * Features:
- * - Captures window.onerror and unhandled exceptions
- * - Intercepts console.log / .warn / .error / .info
- * - Logs DOMContentLoaded and load timing
- * - Reports viewport, UA, and feature detection
- * - On-screen overlay showing recent log entries
- * - Optional POST bin for sending full logs remotely
- *
- * ES5 only — no arrow functions, no let/const, no template
- * literals, no promises, no destructuring.
+ * ES5 only.
  * ============================================================= */
 
 (function() {
   'use strict';
 
-  // ── Configuration ──
-  // Set this to your POST bin URL (e.g. https://webhook.site/xxx)
-  // Leave empty string to disable remote logging.
   var POST_BIN_URL = 'https://www.postb.in/1770677449534-2940259755123';
 
-  // Maximum entries kept in memory
-  var MAX_ENTRIES = 200;
+  // ── Beacon sender ──
+  // Sends a labelled JSON payload as a GET query param via Image.
+  // Splits into numbered chunks if too large for a single URL.
+  function sendBeacon(label, data) {
+    try {
+      var payload = JSON.stringify({ label: label, data: data });
+      var maxLen = 1600;
+      var encoded = encodeURIComponent(payload);
 
-  // How many lines to show on the on-screen overlay
-  var OVERLAY_LINES = 20;
-
-  // Whether the overlay is visible by default
-  var OVERLAY_VISIBLE = true;
-
-  // ── State ──
-  var entries = [];
-  var overlayEl = null;
-  var toggleEl = null;
-  var startTime = new Date().getTime();
-
-  // ── Helpers ──
-  function timestamp() {
-    var elapsed = new Date().getTime() - startTime;
-    return '+' + elapsed + 'ms';
+      if (encoded.length <= maxLen) {
+        fireBeacon(encoded);
+      } else {
+        // Split into chunks
+        var chunks = [];
+        for (var i = 0; i < encoded.length; i += maxLen) {
+          chunks.push(encoded.substring(i, i + maxLen));
+        }
+        for (var c = 0; c < chunks.length; c++) {
+          var meta = encodeURIComponent(label + '_chunk_' + (c + 1) + 'of' + chunks.length + '=');
+          fireBeacon(meta + chunks[c]);
+        }
+      }
+    } catch (e) {
+      // Nothing we can do
+    }
   }
 
-  function safeStr(val) {
-    if (val === null) return 'null';
-    if (val === undefined) return 'undefined';
-    if (typeof val === 'object') {
-      try { return JSON.stringify(val); }
-      catch (e) { return String(val); }
-    }
-    return String(val);
+  function fireBeacon(encodedData) {
+    var sep = POST_BIN_URL.indexOf('?') === -1 ? '?' : '&';
+    var img = new Image();
+    img.src = POST_BIN_URL + sep + 'data=' + encodedData;
   }
 
-  function argsToString(args) {
-    var parts = [];
-    for (var i = 0; i < args.length; i++) {
-      parts.push(safeStr(args[i]));
-    }
-    return parts.join(' ');
-  }
-
-  // ── Core logging ──
-  function addEntry(level, message) {
-    var entry = {
-      time: timestamp(),
-      level: level,
-      message: message
-    };
-
-    entries.push(entry);
-    if (entries.length > MAX_ENTRIES) {
-      entries.shift();
-    }
-
-    updateOverlay();
-  }
-
-  // ── Console interception ──
-  var origConsole = {
-    log:   console.log,
-    warn:  console.warn,
-    error: console.error,
-    info:  console.info
-  };
-
-  console.log = function() {
-    origConsole.log.apply(console, arguments);
-    addEntry('LOG', argsToString(arguments));
-  };
-
-  console.warn = function() {
-    origConsole.warn.apply(console, arguments);
-    addEntry('WARN', argsToString(arguments));
-  };
-
-  console.error = function() {
-    origConsole.error.apply(console, arguments);
-    addEntry('ERR', argsToString(arguments));
-  };
-
-  console.info = function() {
-    origConsole.info.apply(console, arguments);
-    addEntry('INFO', argsToString(arguments));
-  };
-
-  // ── Global error handler ──
-  var origOnError = window.onerror;
-  window.onerror = function(msg, url, line, col, err) {
-    var detail = msg + ' at ' + (url || '?') + ':' + (line || '?') + ':' + (col || '?');
-    if (err && err.stack) {
-      detail += '\n' + err.stack;
-    }
-    addEntry('EXCEPTION', detail);
-
-    if (typeof origOnError === 'function') {
-      return origOnError.apply(this, arguments);
-    }
+  // ── Error capture ──
+  var errors = [];
+  window.onerror = function(msg, url, line, col) {
+    var err = msg + ' @ ' + (url || '?') + ':' + (line || '?') + ':' + (col || '?');
+    errors.push(err);
+    // Send immediately — errors are critical
+    sendBeacon('js_error', { error: err, timestamp: new Date().getTime() });
     return false;
   };
 
-  // ── On-screen overlay ──
-  function createOverlay() {
-    // Container
-    overlayEl = document.createElement('div');
-    overlayEl.id = 'debug-overlay';
-    overlayEl.style.cssText = [
-      'position: fixed',
-      'top: 0',
-      'left: 0',
-      'width: 100%',
-      'height: 100%',
-      'background: #f5f5f5',
-      'color: #000',
-      'font-family: monospace, sans-serif',
-      'font-size: 11px',
-      'line-height: 1.3',
-      'padding: 8px',
-      'overflow-y: auto',
-      'z-index: 99999',
-      'white-space: pre-wrap',
-      'word-wrap: break-word',
-      'display: ' + (OVERLAY_VISIBLE ? 'block' : 'none')
-    ].join('; ') + ';';
-
-    // Toggle button — small tap target in top-right
-    toggleEl = document.createElement('div');
-    toggleEl.id = 'debug-toggle';
-    toggleEl.style.cssText = [
-      'position: fixed',
-      'top: 0',
-      'right: 0',
-      'width: 40px',
-      'height: 40px',
-      'background: #000',
-      'color: #fff',
-      'font-family: monospace, sans-serif',
-      'font-size: 18px',
-      'font-weight: bold',
-      'text-align: center',
-      'line-height: 40px',
-      'z-index: 100000',
-      'cursor: pointer'
-    ].join('; ') + ';';
-    toggleEl.textContent = OVERLAY_VISIBLE ? 'X' : 'D';
-
-    function onToggle(e) {
-      if (e.type === 'touchstart') {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      if (e.type === 'click') {
-        e.stopPropagation();
-      }
-      OVERLAY_VISIBLE = !OVERLAY_VISIBLE;
-      overlayEl.style.display = OVERLAY_VISIBLE ? 'block' : 'none';
-      toggleEl.textContent = OVERLAY_VISIBLE ? 'X' : 'D';
-      if (OVERLAY_VISIBLE) {
-        updateOverlay();
-      }
-    }
-
-    toggleEl.addEventListener('touchstart', onToggle, false);
-    toggleEl.addEventListener('click', onToggle, false);
-
-    document.body.appendChild(overlayEl);
-    document.body.appendChild(toggleEl);
-  }
-
-  function updateOverlay() {
-    if (!overlayEl || !OVERLAY_VISIBLE) return;
-
-    var start = Math.max(0, entries.length - OVERLAY_LINES);
-    var lines = [];
-    for (var i = start; i < entries.length; i++) {
-      var e = entries[i];
-      lines.push('[' + e.level + ' ' + e.time + '] ' + e.message);
-    }
-    overlayEl.textContent = lines.join('\n');
-    overlayEl.scrollTop = overlayEl.scrollHeight;
-  }
-
-  // ── POST bin ──
-  // Tries XHR POST first, then falls back to Image beacon (GET).
-  // Image beacons bypass CORS since they're just <img> loads.
-
-  function buildPayload() {
-    return {
-      userAgent: navigator.userAgent,
-      viewport: {
-        innerWidth: window.innerWidth,
-        innerHeight: window.innerHeight,
-        screenWidth: screen.width,
-        screenHeight: screen.height,
-        devicePixelRatio: window.devicePixelRatio || 'N/A'
-      },
-      entries: entries.slice(0)
-    };
-  }
-
-  function sendViaXHR(url, data, onFail) {
+  // ── Helper: get computed style safely ──
+  function cs(el, prop) {
     try {
-      var xhr = new XMLHttpRequest();
-      xhr.open('POST', url, true);
-      xhr.setRequestHeader('Content-Type', 'application/json');
-      xhr.onreadystatechange = function() {
-        if (xhr.readyState === 4) {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            addEntry('INFO', 'POST bin: XHR sent OK (status ' + xhr.status + ')');
-          } else {
-            addEntry('WARN', 'POST bin: XHR status ' + xhr.status + ', trying beacon');
-            if (onFail) onFail();
-          }
-        }
-      };
-      xhr.onerror = function() {
-        addEntry('WARN', 'POST bin: XHR failed (network/CORS), trying beacon');
-        if (onFail) onFail();
-      };
-      xhr.send(JSON.stringify(data));
+      var style = window.getComputedStyle(el);
+      return style[prop] || style.getPropertyValue(prop) || 'N/A';
     } catch (e) {
-      addEntry('WARN', 'POST bin: XHR exception: ' + e.message);
-      if (onFail) onFail();
+      return 'ERR:' + e.message;
     }
   }
 
-  function sendViaBeacon(url, data) {
-    // Encode payload as a query param on a GET request via Image.
-    // Most POST bins won't accept this, so we use a chunked approach:
-    // send a summary as a single beacon hit.
-    try {
-      var summary = {
-        ua: navigator.userAgent,
-        vp: window.innerWidth + 'x' + window.innerHeight,
-        scr: screen.width + 'x' + screen.height,
-        dpr: window.devicePixelRatio || 'N/A',
-        logCount: data.entries.length,
-        errors: [],
-        log: []
-      };
+  // ── Run diagnostics after everything has loaded ──
+  window.addEventListener('load', function() {
 
-      // Collect errors and last N log lines
-      for (var i = 0; i < data.entries.length; i++) {
-        var e = data.entries[i];
-        if (e.level === 'EXCEPTION' || e.level === 'ERR') {
-          summary.errors.push(e.time + ' ' + e.message);
-        }
-        summary.log.push('[' + e.level + ' ' + e.time + '] ' + e.message);
+    // Small delay to let the app's init() finish
+    setTimeout(function() {
+      var diag = {};
+
+      // 1. Environment
+      diag.ua = navigator.userAgent;
+      diag.viewport = window.innerWidth + 'x' + window.innerHeight;
+      diag.screen = screen.width + 'x' + screen.height;
+      diag.hasHead = !!document.head;
+
+      // 2. Root / landscape wrapper
+      var root = document.getElementById('root');
+      if (root) {
+        diag.rootInlineStyle = root.style.cssText;
+        diag.rootDisplay = cs(root, 'display');
+        diag.rootWidth = cs(root, 'width');
+        diag.rootHeight = cs(root, 'height');
+        diag.rootOverflow = cs(root, 'overflow');
+        diag.rootWebkitTransform = cs(root, '-webkit-transform');
+        diag.rootTransform = cs(root, 'transform');
+        diag.rootMarginLeft = cs(root, 'margin-left');
+      } else {
+        diag.root = 'MISSING';
       }
 
-      // URL-encode and truncate to stay under ~2000 chars for the URL
-      var encoded = encodeURIComponent(JSON.stringify(summary));
-      if (encoded.length > 1800) {
-        // Trim log entries to fit
-        while (summary.log.length > 0 && encodeURIComponent(JSON.stringify(summary)).length > 1800) {
-          summary.log.shift();
-        }
-        encoded = encodeURIComponent(JSON.stringify(summary));
+      sendBeacon('diag_root', diag);
+
+      // 3. View-0 (main view)
+      var v0 = {};
+      var view0 = document.getElementById('view-0');
+      if (view0) {
+        v0.className = view0.className;
+        v0.display = cs(view0, 'display');
+        v0.width = cs(view0, 'width');
+        v0.height = cs(view0, 'height');
+        v0.webkitBoxOrient = cs(view0, '-webkit-box-orient');
+        v0.webkitBoxAlign = cs(view0, '-webkit-box-align');
+        v0.webkitBoxPack = cs(view0, '-webkit-box-pack');
+        v0.childCount = view0.childNodes.length;
+        v0.innerHTML_len = view0.innerHTML.length;
+      } else {
+        v0.view0 = 'MISSING';
       }
 
-      var sep = url.indexOf('?') === -1 ? '?' : '&';
-      var img = new Image();
-      img.onload = function() {
-        addEntry('INFO', 'POST bin: beacon sent OK');
-      };
-      img.onerror = function() {
-        addEntry('WARN', 'POST bin: beacon also failed (img blocked or URL rejected)');
-      };
-      img.src = url + sep + 'data=' + encoded;
-    } catch (e) {
-      addEntry('WARN', 'POST bin: beacon exception: ' + e.message);
-    }
-  }
+      sendBeacon('diag_view0', v0);
 
-  function flushToBin() {
-    if (!POST_BIN_URL || entries.length === 0) return;
-
-    var data = buildPayload();
-    sendViaXHR(POST_BIN_URL, data, function() {
-      sendViaBeacon(POST_BIN_URL, data);
-    });
-  }
-
-  // ── Feature / environment detection ──
-
-  // Test a single CSS declaration. Returns true if the browser accepts it.
-  function testCSS(declaration) {
-    var el = document.createElement('div');
-    el.style.cssText = declaration;
-    return el.style.cssText.length > 0;
-  }
-
-  function detectEnvironment() {
-    addEntry('INFO', '=== Kindle Debug Tools Loaded ===');
-    addEntry('INFO', 'UA: ' + navigator.userAgent);
-    addEntry('INFO', 'Screen: ' + screen.width + 'x' + screen.height);
-    addEntry('INFO', 'Viewport: ' + window.innerWidth + 'x' + window.innerHeight);
-    addEntry('INFO', 'DPR: ' + (window.devicePixelRatio || 'N/A'));
-
-    // CSS feature checks — test both unprefixed and -webkit- variants
-    var cssTests = [
-      ['display: flex',              'display: -webkit-flex',             'display: -webkit-box',    'Flexbox'],
-      ['display: grid',              null,                                null,                      'CSS Grid'],
-      ['--test: 1',                  null,                                null,                      'Custom Props'],
-      ['transform: rotate(0deg)',    '-webkit-transform: rotate(0deg)',   null,                      'Transform'],
-      ['animation: none',            '-webkit-animation: none',           null,                      'Animation'],
-      ['position: fixed',            null,                                null,                      'Position Fixed'],
-      ['width: 100vh',               null,                                null,                      'Viewport Units']
-    ];
-
-    for (var i = 0; i < cssTests.length; i++) {
-      var row = cssTests[i];
-      var label = row[row.length - 1];
-      var result = 'NO';
-
-      for (var j = 0; j < row.length - 1; j++) {
-        if (row[j] && testCSS(row[j])) {
-          result = (j === 0) ? 'YES' : 'YES (via ' + row[j].split(':')[0] + ')';
-          break;
-        }
+      // 4. Panels
+      var panels = {};
+      var lp = view0 ? view0.querySelector('.left-panel') : null;
+      var rp = view0 ? view0.querySelector('.right-panel') : null;
+      if (lp) {
+        panels.leftDisplay = cs(lp, 'display');
+        panels.leftWidth = cs(lp, 'width');
+        panels.leftHeight = cs(lp, 'height');
+      } else {
+        panels.leftPanel = 'MISSING';
+      }
+      if (rp) {
+        panels.rightDisplay = cs(rp, 'display');
+        panels.rightWidth = cs(rp, 'width');
+        panels.rightHeight = cs(rp, 'height');
+      } else {
+        panels.rightPanel = 'MISSING';
       }
 
-      addEntry('INFO', label + ': ' + result);
-    }
+      sendBeacon('diag_panels', panels);
 
-    // JS feature checks
-    var jsFeatures = [
-      ['JSON',             typeof JSON !== 'undefined'],
-      ['querySelector',    typeof document.querySelector === 'function'],
-      ['addEventListener', typeof document.addEventListener === 'function'],
-      ['getComputedStyle', typeof window.getComputedStyle === 'function'],
-      ['XMLHttpRequest',   typeof XMLHttpRequest !== 'undefined'],
-      ['classList',        document.documentElement.classList !== undefined]
-    ];
-
-    for (var k = 0; k < jsFeatures.length; k++) {
-      addEntry('INFO', jsFeatures[k][0] + ': ' + (jsFeatures[k][1] ? 'YES' : 'NO'));
-    }
-  }
-
-  // ── Lifecycle hooks ──
-  function onDOMReady() {
-    addEntry('INFO', 'DOMContentLoaded fired');
-    createOverlay();
-    updateOverlay();
-  }
-
-  function onLoad() {
-    addEntry('INFO', 'window.load fired');
-    updateOverlay();
-
-    // Check if the main app elements exist
-    var checks = [
-      'root', 'clock', 'hourHand', 'minuteHand',
-      'dateDayName', 'dateFull', 'cal-current', 'cal-next',
-      'view-0', 'view-1', 'viewDots'
-    ];
-    for (var i = 0; i < checks.length; i++) {
-      var el = document.getElementById(checks[i]);
-      addEntry('INFO', 'DOM #' + checks[i] + ': ' + (el ? 'found' : 'MISSING'));
-    }
-
-    // Check if view-0 is active
-    var view0 = document.getElementById('view-0');
-    if (view0) {
-      addEntry('INFO', 'view-0 classes: "' + view0.className + '"');
-      var style = window.getComputedStyle(view0);
-      addEntry('INFO', 'view-0 display: ' + style.display);
-      addEntry('INFO', 'view-0 size: ' + style.width + ' x ' + style.height);
-    }
-
-    // Check landscape wrapper
-    var rootEl = document.getElementById('root');
-    if (rootEl) {
-      var rootStyle = window.getComputedStyle(rootEl);
-      addEntry('INFO', 'root size: ' + rootStyle.width + ' x ' + rootStyle.height);
-      var tf = rootStyle.transform || rootStyle.webkitTransform || rootStyle.getPropertyValue('-webkit-transform') || 'N/A';
-      addEntry('INFO', 'root transform: ' + tf);
-    }
-
-    // Send everything to POST bin if configured
-    flushToBin();
-  }
-
-  // If body already exists (script in body), create overlay immediately
-  // Otherwise wait for DOMContentLoaded
-  if (document.body) {
-    createOverlay();
-    detectEnvironment();
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-      if (!overlayEl) {
-        createOverlay();
-        detectEnvironment();
+      // 5. Clock & calendar check
+      var content = {};
+      var clock = document.getElementById('clock');
+      if (clock) {
+        content.clockDisplay = cs(clock, 'display');
+        content.clockWidth = cs(clock, 'width');
+        content.clockHeight = cs(clock, 'height');
       }
-      onDOMReady();
-    }, false);
-  } else {
-    // DOM already ready
-    if (!overlayEl && document.body) {
-      createOverlay();
-      detectEnvironment();
-    }
-    onDOMReady();
-  }
+      var cal = document.getElementById('cal-current');
+      if (cal) {
+        content.calInnerLen = cal.innerHTML.length;
+        content.calFirstChild = cal.firstChild ? cal.firstChild.nodeName : 'none';
+      }
+      var dateEl = document.getElementById('dateFull');
+      if (dateEl) {
+        content.dateText = dateEl.textContent || dateEl.innerText || 'empty';
+      }
 
-  window.addEventListener('load', onLoad, false);
+      // Check the injected animation style element
+      var styles = document.getElementsByTagName('style');
+      content.styleCount = styles.length;
+      if (styles.length > 0) {
+        var lastStyle = styles[styles.length - 1];
+        var cssText = lastStyle.textContent || lastStyle.innerText || '';
+        content.lastStyleLen = cssText.length;
+        content.lastStyleSnippet = cssText.substring(0, 120);
+      }
 
-  // ── Public API ──
-  // Accessible as window.kindleDebug for manual use from console
-  window.kindleDebug = {
-    log: function(msg) { addEntry('LOG', msg); },
-    warn: function(msg) { addEntry('WARN', msg); },
-    error: function(msg) { addEntry('ERR', msg); },
-    entries: function() { return entries.slice(0); },
-    flush: flushToBin,
-    show: function() {
-      OVERLAY_VISIBLE = true;
-      if (overlayEl) overlayEl.style.display = 'block';
-      if (toggleEl) toggleEl.textContent = 'X';
-      updateOverlay();
-    },
-    hide: function() {
-      OVERLAY_VISIBLE = false;
-      if (overlayEl) overlayEl.style.display = 'none';
-      if (toggleEl) toggleEl.textContent = 'D';
-    }
-  };
+      sendBeacon('diag_content', content);
+
+      // 6. Live -webkit-box layout test
+      // Create a test box and measure if children actually lay out
+      var boxTest = {};
+      try {
+        var parent = document.createElement('div');
+        parent.style.cssText = 'display:-webkit-box;-webkit-box-orient:horizontal;width:200px;height:50px;position:absolute;top:-9999px;left:0;';
+        var child1 = document.createElement('div');
+        child1.style.cssText = 'width:100px;height:50px;';
+        var child2 = document.createElement('div');
+        child2.style.cssText = 'width:100px;height:50px;';
+        parent.appendChild(child1);
+        parent.appendChild(child2);
+        document.body.appendChild(parent);
+
+        var pcs = window.getComputedStyle(parent);
+        boxTest.parentDisplay = pcs.display;
+        boxTest.parentWidth = pcs.width;
+
+        var c1r = child1.getBoundingClientRect();
+        var c2r = child2.getBoundingClientRect();
+        boxTest.child1Left = c1r.left;
+        boxTest.child1Width = c1r.width;
+        boxTest.child2Left = c2r.left;
+        boxTest.child2Width = c2r.width;
+        boxTest.sameRow = (c1r.top === c2r.top);
+
+        document.body.removeChild(parent);
+      } catch (e) {
+        boxTest.error = e.message;
+      }
+
+      sendBeacon('diag_boxtest', boxTest);
+
+      // 7. Errors collected
+      sendBeacon('diag_errors', { errors: errors, count: errors.length });
+
+    }, 200);
+  }, false);
 })();
