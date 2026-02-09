@@ -24,7 +24,7 @@
   // ── Configuration ──
   // Set this to your POST bin URL (e.g. https://webhook.site/xxx)
   // Leave empty string to disable remote logging.
-  var POST_BIN_URL = 'https://www.postb.in/1770669672068-0257198009639';
+  var POST_BIN_URL = 'https://www.postb.in/1770677449534-2940259755123';
 
   // Maximum entries kept in memory
   var MAX_ENTRIES = 200;
