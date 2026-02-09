@@ -139,7 +139,8 @@ Right panel (55%): two calendar months stacked vertically
 
 ```
 /
-├── kindle-calendar.html    # The entire app — single file
+├── index.html              # The entire app — single file
+├── debug.js                # Debug overlay & POST bin (comment out to disable)
 ├── README.md
 ├── CLAUDE.md               # Agent instructions for Claude Code
 └── PLAN.md                 # This file

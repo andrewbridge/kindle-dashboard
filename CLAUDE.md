@@ -11,10 +11,22 @@ Read PLAN.md for full design decisions and architecture.
 ### Kindle Browser Compatibility
 - **ES5 only** — no arrow functions, no let/const, no template literals, no destructuring, no promises, no async/await, no ES6 modules
 - Use `var`, function expressions, string concatenation with `+`
-- The browser is WebKit-based (circa 2009 vintage, updated in firmware v5.16.4)
-- CSS3 is supported including transforms, animations, grid, and custom properties
+- The browser is WebKit 534.26+ (circa 2011), UA: `Mozilla/5.0 (X11; ; U; Linux armv7l; en-gb) AppleWebKit/534.26+ (KHTML, like Gecko) Version/5.0 Safari/534.26+`
+- Screen: 1072×1448, viewport: 1072×1268, DPR: ~1.8
+- **CSS that works (confirmed on device):**
+  - `-webkit-transform` (NOT unprefixed `transform`)
+  - `-webkit-animation` / `@-webkit-keyframes` (NOT unprefixed)
+  - `-webkit-box` flexbox (old spec — NOT `display: flex` or `-webkit-flex`)
+  - `position: fixed`
+  - `border-radius`, basic positioning, `::after` pseudo-elements
+- **CSS that does NOT work:**
+  - `display: flex` / `display: grid` — use `-webkit-box` or table layout
+  - CSS custom properties (`var(--foo)`) — inject values directly via JS
+  - Viewport units (`vh`, `vw`) — use JS-calculated pixel values
+  - Unprefixed `transform`, `animation`, `transform-origin`
 - No web fonts — system sans-serif only
 - Canvas is supported but we deliberately avoid it (causes large repaint regions)
+- XHR exists but CORS is restricted; Image beacon (GET) works for cross-origin
 
 ### E-ink Display Rules
 - **Never** add CSS animations or transitions except on the clock hands
@@ -40,7 +52,7 @@ Read PLAN.md for full design decisions and architecture.
 
 ## Development
 
-No build step. Just edit `kindle-calendar.html` and open in a browser to test. The landscape rotation means you'll want to resize your browser to portrait-ish proportions to see the rotated layout.
+No build step. Just edit `index.html` and open in a browser to test. The landscape rotation means you'll want to resize your browser to portrait-ish proportions to see the rotated layout.
 
 For testing on the actual Kindle:
 1. Host the file (e.g. `python3 -m http.server` on the local network, or push to GitHub Pages)

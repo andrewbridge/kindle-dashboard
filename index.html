@@ -14,6 +14,12 @@
  * - No shadows, gradients, or transparency
  * - High contrast: #000 on #f5f5f5
  * - No hover states (touch device)
+ *
+ * === WebKit 534.26 compatibility ===
+ * - Use -webkit-transform, -webkit-animation, -webkit-transform-origin
+ * - Use -webkit-box for flexbox (old spec)
+ * - No CSS Grid (use tables), no custom properties (JS injects values)
+ * - No viewport units (JS sets pixel sizes)
  */
 
 *, *::before, *::after {
@@ -34,20 +40,17 @@ html, body {
 
 /* === Landscape rotation wrapper ===
  * Rotates the entire UI 90° clockwise.
- * Width/height are swapped so layout engine sees landscape dimensions.
- * Touch coordinates are remapped in JS.
+ * Width/height are set by JS (no viewport units available).
  */
 .landscape-wrap {
   position: absolute;
   top: 0;
   left: 0;
-  width: 100vh;
-  height: 100vw;
-  transform: rotate(90deg);
-  transform-origin: top left;
-  /* Shift into view after rotation */
-  margin-left: 100vw;
+  /* width and height set by JS — see initLandscape() */
+  -webkit-transform: rotate(90deg);
+  -webkit-transform-origin: top left;
   overflow: hidden;
+  /* margin-left set by JS */
 }
 
 /* === View system === */
@@ -58,42 +61,45 @@ html, body {
 }
 
 .view.active {
-  display: flex;
+  /* -webkit-box is the old flexbox; display set here and
+     box properties on subclasses control layout direction. */
+  display: -webkit-box;
 }
 
 /* === Main calendar/clock view === */
 .main-view {
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
+  -webkit-box-orient: horizontal;
+  -webkit-box-align: center;
+  -webkit-box-pack: center;
   padding: 20px;
 }
 
 /* Left panel: clock + date */
 .left-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-box-align: center;
+  -webkit-box-pack: center;
   width: 45%;
   padding-right: 20px;
 }
 
 /* Right panel: calendars */
 .right-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-box-align: center;
+  -webkit-box-pack: center;
   width: 55%;
-  gap: 16px;
+}
+
+/* Spacing between the two calendars */
+.right-panel .calendar + .calendar {
+  margin-top: 16px;
 }
 
 /* === Analogue clock ===
- * Pure CSS rendering with transform: rotate().
+ * Pure CSS rendering with -webkit-transform: rotate().
  * Stepped animation driven by CSS, recalibrated by JS every 15 mins.
  */
 .clock {
@@ -109,7 +115,7 @@ html, body {
   position: absolute;
   top: 50%;
   left: 50%;
-  transform-origin: 0 0;
+  -webkit-transform-origin: 0 0;
 }
 
 .clock-marker::after {
@@ -120,19 +126,19 @@ html, body {
 }
 
 /* 12 o'clock */
-.clock-marker.m12 { transform: translate(-50%, -50%) rotate(0deg); }
+.clock-marker.m12 { -webkit-transform: translate(-50%, -50%) rotate(0deg); }
 .clock-marker.m12::after { width: 4px; height: 20px; top: -128px; left: -2px; }
 
 /* 3 o'clock */
-.clock-marker.m3 { transform: translate(-50%, -50%) rotate(90deg); }
+.clock-marker.m3 { -webkit-transform: translate(-50%, -50%) rotate(90deg); }
 .clock-marker.m3::after { width: 4px; height: 20px; top: -128px; left: -2px; }
 
 /* 6 o'clock */
-.clock-marker.m6 { transform: translate(-50%, -50%) rotate(180deg); }
+.clock-marker.m6 { -webkit-transform: translate(-50%, -50%) rotate(180deg); }
 .clock-marker.m6::after { width: 4px; height: 20px; top: -128px; left: -2px; }
 
 /* 9 o'clock */
-.clock-marker.m9 { transform: translate(-50%, -50%) rotate(270deg); }
+.clock-marker.m9 { -webkit-transform: translate(-50%, -50%) rotate(270deg); }
 .clock-marker.m9::after { width: 4px; height: 20px; top: -128px; left: -2px; }
 
 /* Clock hands - common */
@@ -140,7 +146,7 @@ html, body {
   position: absolute;
   bottom: 50%;
   left: 50%;
-  transform-origin: bottom center;
+  -webkit-transform-origin: bottom center;
   background: #000;
   border-radius: 2px;
 }
@@ -172,30 +178,10 @@ html, body {
 }
 
 /* === Stepped clock animations ===
- * Minute hand: 15 steps over 900 seconds (15 minutes)
- * Hour hand: 3 steps over 900 seconds (moves every 5 mins, 2.5° per step)
+ * @-webkit-keyframes are injected dynamically by JS (setClock)
+ * because CSS custom properties are not available.
+ * The .animated class is toggled by JS to trigger the animation.
  */
-@keyframes minute-rotate {
-  from { transform: rotate(var(--minute-start)); }
-  to   { transform: rotate(var(--minute-end)); }
-}
-
-@keyframes hour-rotate {
-  from { transform: rotate(var(--hour-start)); }
-  to   { transform: rotate(var(--hour-end)); }
-}
-
-.minute-hand.animated {
-  animation: minute-rotate 900s steps(15, end) 1;
-  animation-fill-mode: forwards;
-  animation-delay: var(--minute-delay);
-}
-
-.hour-hand.animated {
-  animation: hour-rotate 900s steps(3, end) 1;
-  animation-fill-mode: var(--hour-fill, forwards);
-  animation-delay: var(--hour-delay);
-}
 
 /* === Date display === */
 .date-display {
@@ -214,7 +200,7 @@ html, body {
   margin-top: 4px;
 }
 
-/* === Calendar grids === */
+/* === Calendar tables === */
 .calendar {
   width: 100%;
   max-width: 340px;
@@ -229,18 +215,19 @@ html, body {
   margin-bottom: 0;
 }
 
-.calendar-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 0;
+.calendar-table {
+  width: 100%;
+  border-collapse: collapse;
   text-align: center;
   font-size: 15px;
   line-height: 1;
   border-left: 1px solid #000;
   border-right: 1px solid #000;
+  border-bottom: 1px solid #000;
+  table-layout: fixed;
 }
 
-.calendar-grid .day-label {
+.calendar-table th {
   font-weight: bold;
   padding: 5px 0;
   font-size: 13px;
@@ -248,50 +235,35 @@ html, body {
   border-right: 1px solid #ccc;
 }
 
-.calendar-grid .day-label:last-child {
+.calendar-table th:last-child {
   border-right: none;
 }
 
-.calendar-grid .day-cell {
+.calendar-table td {
   padding: 5px 2px;
-  font-variant-numeric: tabular-nums;
   border-bottom: 1px solid #ccc;
   border-right: 1px solid #ccc;
 }
 
-.calendar-grid .day-cell:nth-child(7n) {
+.calendar-table td:last-child {
   border-right: none;
 }
 
-.calendar-grid .day-cell.empty {
-  /* empty cells for padding */
-}
-
-.calendar-grid .day-cell.today {
+.calendar-table td.today {
   font-weight: bold;
   background: #000;
   color: #fff;
 }
 
-.calendar-grid .day-cell.past {
+.calendar-table td.past {
   color: #999;
-}
-
-/* Bottom border for the last row */
-.calendar-grid .day-cell:nth-last-child(-n+7) {
-  /* Already has border-bottom from .day-cell */
-}
-
-/* Ensure full bottom border on the grid */
-.calendar-grid {
-  border-bottom: 1px solid #000;
 }
 
 /* === Secondary views === */
 .secondary-view {
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  -webkit-box-orient: vertical;
+  -webkit-box-align: center;
+  -webkit-box-pack: center;
   padding: 40px;
 }
 
@@ -311,17 +283,17 @@ html, body {
 .view-dots {
   position: absolute;
   bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 8px;
+  width: 100%;
+  text-align: center;
 }
 
 .view-dot {
+  display: inline-block;
   width: 10px;
   height: 10px;
   border: 3px solid #000;
   border-radius: 50%;
+  margin: 0 4px;
 }
 
 .view-dot.active {
@@ -371,13 +343,13 @@ html, body {
 <script>
 /* =============================================================
  * Kindle E-ink Calendar & Clock
- * 
+ *
  * Design goals:
  * - Minimal JS execution (runs every 15 mins for recalibration)
  * - Clock hands driven by CSS stepped animation
  * - Calendar re-renders only when date changes
  * - Touch to cycle views, auto-return after 30s
- * - ES5-safe for Kindle 11th gen browser compatibility
+ * - ES5-safe for Kindle WebKit 534.26 browser
  * ============================================================= */
 
 (function() {
@@ -397,6 +369,7 @@ html, body {
   var autoReturnTimer  = null;
   var recalibrateTimer = null;
   var lastDateStr      = '';
+  var animStyleEl      = null;  // <style> element for injected keyframes
 
   // ── DOM refs ──
   var hourHand   = document.getElementById('hourHand');
@@ -411,10 +384,41 @@ html, body {
   // ── Utility ──
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
 
+  // ── Landscape wrapper sizing ──
+  // Viewport units (vh/vw) are not supported. Set dimensions in pixels
+  // and update margin-left for the rotation shift.
+  function initLandscape() {
+    var w = window.innerWidth;
+    var h = window.innerHeight;
+    root.style.width = h + 'px';
+    root.style.height = w + 'px';
+    root.style.marginLeft = w + 'px';
+  }
+
   // ── Clock ──
   // Each minute = 6°, each hour = 30°, each minute adds 0.5° to hour
   function getMinuteAngle(m) { return m * 6; }
   function getHourAngle(h, m)  { return (h % 12) * 30 + m * 0.5; }
+
+  // Inject @-webkit-keyframes dynamically since CSS custom properties
+  // are not available. Replaces the <style> element each recalibration.
+  function injectKeyframes(minuteStart, minuteEnd, hourStart, hourEnd) {
+    var css =
+      '@-webkit-keyframes minute-rotate {' +
+        ' from { -webkit-transform: rotate(' + minuteStart + 'deg); }' +
+        ' to   { -webkit-transform: rotate(' + minuteEnd + 'deg); }' +
+      ' }' +
+      ' @-webkit-keyframes hour-rotate {' +
+        ' from { -webkit-transform: rotate(' + hourStart + 'deg); }' +
+        ' to   { -webkit-transform: rotate(' + hourEnd + 'deg); }' +
+      ' }';
+
+    if (!animStyleEl) {
+      animStyleEl = document.createElement('style');
+      document.head.appendChild(animStyleEl);
+    }
+    animStyleEl.textContent = css;
+  }
 
   function setClock() {
     var now = new Date();
@@ -436,20 +440,22 @@ html, body {
 
     // How far into the 900s animation are we? (negative delay = skip ahead)
     var elapsedInBlock = blockMinute * 60 + now.getSeconds();
-    var delayOffset    = '-' + elapsedInBlock + 's';
+    var delayValue     = '-' + elapsedInBlock + 's';
 
     // Remove animated class to force re-trigger
     hourHand.className   = 'clock-hand hour-hand';
     minuteHand.className = 'clock-hand minute-hand';
 
-    // Set CSS custom properties
-    var rs = document.documentElement.style;
-    rs.setProperty('--minute-start', minuteStartAngle + 'deg');
-    rs.setProperty('--minute-end',   minuteEndAngle + 'deg');
-    rs.setProperty('--minute-delay', delayOffset);
-    rs.setProperty('--hour-start',   hourStartAngle + 'deg');
-    rs.setProperty('--hour-end',     hourEndAngle + 'deg');
-    rs.setProperty('--hour-delay',   delayOffset);
+    // Inject new keyframes with the actual angle values
+    injectKeyframes(minuteStartAngle, minuteEndAngle, hourStartAngle, hourEndAngle);
+
+    // Set animation delay as inline style (no custom properties)
+    hourHand.style.cssText =
+      '-webkit-animation: hour-rotate 900s steps(3, end) 1 forwards;' +
+      '-webkit-animation-delay: ' + delayValue + ';';
+    minuteHand.style.cssText =
+      '-webkit-animation: minute-rotate 900s steps(15, end) 1 forwards;' +
+      '-webkit-animation-delay: ' + delayValue + ';';
 
     // Force reflow then re-add animation class
     void hourHand.offsetWidth;
@@ -458,6 +464,7 @@ html, body {
   }
 
   // ── Calendar rendering ──
+  // Uses <table> instead of CSS Grid (not available on Kindle WebKit)
   function renderCalendar(container, year, month, highlightToday) {
     // month is 0-indexed
     var firstDay = new Date(year, month, 1);
@@ -471,31 +478,43 @@ html, body {
     var todayYear = today.getFullYear();
 
     var html = '<div class="calendar-header">' + MONTHS_FULL[month] + ' ' + year + '</div>';
-    html += '<div class="calendar-grid">';
+    html += '<table class="calendar-table"><tr>';
 
-    // Day labels
+    // Day labels (header row)
     for (var d = 0; d < 7; d++) {
-      html += '<div class="day-label">' + DAYS_SHORT[d] + '</div>';
+      html += '<th>' + DAYS_SHORT[d] + '</th>';
     }
+    html += '</tr><tr>';
 
     // Empty cells before first day
     for (var e = 0; e < startDow; e++) {
-      html += '<div class="day-cell empty"></div>';
+      html += '<td></td>';
     }
 
     // Day cells
+    var col = startDow;
     for (var i = 1; i <= daysInMonth; i++) {
-      var classes = 'day-cell';
+      var cls = '';
       if (highlightToday && i === todayDate && month === todayMonth && year === todayYear) {
-        classes += ' today';
+        cls = ' class="today"';
+      } else if (highlightToday && month === todayMonth && year === todayYear && i < todayDate) {
+        cls = ' class="past"';
       }
-      if (highlightToday && month === todayMonth && year === todayYear && i < todayDate) {
-        classes += ' past';
+      html += '<td' + cls + '>' + i + '</td>';
+      col++;
+      if (col === 7 && i < daysInMonth) {
+        html += '</tr><tr>';
+        col = 0;
       }
-      html += '<div class="' + classes + '">' + i + '</div>';
     }
 
-    html += '</div>';
+    // Trailing empty cells to complete the last row
+    while (col > 0 && col < 7) {
+      html += '<td></td>';
+      col++;
+    }
+
+    html += '</tr></table>';
     container.innerHTML = html;
   }
 
@@ -516,7 +535,7 @@ html, body {
   // ── Date display ──
   function renderDate() {
     var now = new Date();
-    var dateStr = now.getFullYear() + '-' + pad(now.getMonth()) + '-' + pad(now.getDate());
+    var dateStr = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
 
     // Only re-render if the date actually changed
     if (dateStr === lastDateStr) return;
@@ -568,7 +587,6 @@ html, body {
 
   // ── Touch handling ──
   // Tap anywhere to cycle between views.
-  // CSS transforms don't affect DOM hit testing, so no coordinate remapping needed.
   function onTouch(e) {
     // Prevent double-firing
     if (e.type === 'touchstart') {
@@ -607,6 +625,7 @@ html, body {
 
   // ── Initialise ──
   function init() {
+    initLandscape();
     renderDate();
     setClock();
     renderDots();
