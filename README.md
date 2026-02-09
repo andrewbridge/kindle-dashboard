@@ -20,6 +20,6 @@ Single static HTML file — designed for GitHub Pages or any static host. No bui
 
 ## Running Locally
 
-Just open `kindle-calendar.html` in a browser. The landscape rotation means it'll look odd in a normal browser window — resize your window to roughly portrait proportions (e.g. 400×600) to see the rotated layout properly.
+Just open `index.html` in a browser. The landscape rotation means it'll look odd in a normal browser window — resize your window to roughly portrait proportions (e.g. 400×600) to see the rotated layout properly.
 
 On the Kindle, navigate to the hosted URL in the Experimental Browser.
