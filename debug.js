@@ -10,7 +10,7 @@
 (function() {
   'use strict';
 
-  var POST_BIN_URL = 'https://www.postb.in/1770677449534-2940259755123';
+  var POST_BIN_URL = 'https://www.postb.in/1770678784588-3683571361470';
 
   // ── Beacon sender ──
   // Sends a labelled JSON payload as a GET query param via Image.
