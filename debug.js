@@ -206,23 +206,11 @@
   }
 
   // ── POST bin ──
-  function sendToBin(payload) {
-    if (!POST_BIN_URL) return;
+  // Tries XHR POST first, then falls back to Image beacon (GET).
+  // Image beacons bypass CORS since they're just <img> loads.
 
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', POST_BIN_URL, true);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    try {
-      xhr.send(JSON.stringify(payload));
-    } catch (e) {
-      // Silently fail — we're debugging, not adding more problems
-    }
-  }
-
-  function flushToBin() {
-    if (!POST_BIN_URL || entries.length === 0) return;
-
-    sendToBin({
+  function buildPayload() {
+    return {
       userAgent: navigator.userAgent,
       viewport: {
         innerWidth: window.innerWidth,
@@ -232,10 +220,101 @@
         devicePixelRatio: window.devicePixelRatio || 'N/A'
       },
       entries: entries.slice(0)
+    };
+  }
+
+  function sendViaXHR(url, data, onFail) {
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4) {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            addEntry('INFO', 'POST bin: XHR sent OK (status ' + xhr.status + ')');
+          } else {
+            addEntry('WARN', 'POST bin: XHR status ' + xhr.status + ', trying beacon');
+            if (onFail) onFail();
+          }
+        }
+      };
+      xhr.onerror = function() {
+        addEntry('WARN', 'POST bin: XHR failed (network/CORS), trying beacon');
+        if (onFail) onFail();
+      };
+      xhr.send(JSON.stringify(data));
+    } catch (e) {
+      addEntry('WARN', 'POST bin: XHR exception: ' + e.message);
+      if (onFail) onFail();
+    }
+  }
+
+  function sendViaBeacon(url, data) {
+    // Encode payload as a query param on a GET request via Image.
+    // Most POST bins won't accept this, so we use a chunked approach:
+    // send a summary as a single beacon hit.
+    try {
+      var summary = {
+        ua: navigator.userAgent,
+        vp: window.innerWidth + 'x' + window.innerHeight,
+        scr: screen.width + 'x' + screen.height,
+        dpr: window.devicePixelRatio || 'N/A',
+        logCount: data.entries.length,
+        errors: [],
+        log: []
+      };
+
+      // Collect errors and last N log lines
+      for (var i = 0; i < data.entries.length; i++) {
+        var e = data.entries[i];
+        if (e.level === 'EXCEPTION' || e.level === 'ERR') {
+          summary.errors.push(e.time + ' ' + e.message);
+        }
+        summary.log.push('[' + e.level + ' ' + e.time + '] ' + e.message);
+      }
+
+      // URL-encode and truncate to stay under ~2000 chars for the URL
+      var encoded = encodeURIComponent(JSON.stringify(summary));
+      if (encoded.length > 1800) {
+        // Trim log entries to fit
+        while (summary.log.length > 0 && encodeURIComponent(JSON.stringify(summary)).length > 1800) {
+          summary.log.shift();
+        }
+        encoded = encodeURIComponent(JSON.stringify(summary));
+      }
+
+      var sep = url.indexOf('?') === -1 ? '?' : '&';
+      var img = new Image();
+      img.onload = function() {
+        addEntry('INFO', 'POST bin: beacon sent OK');
+      };
+      img.onerror = function() {
+        addEntry('WARN', 'POST bin: beacon also failed (img blocked or URL rejected)');
+      };
+      img.src = url + sep + 'data=' + encoded;
+    } catch (e) {
+      addEntry('WARN', 'POST bin: beacon exception: ' + e.message);
+    }
+  }
+
+  function flushToBin() {
+    if (!POST_BIN_URL || entries.length === 0) return;
+
+    var data = buildPayload();
+    sendViaXHR(POST_BIN_URL, data, function() {
+      sendViaBeacon(POST_BIN_URL, data);
     });
   }
 
   // ── Feature / environment detection ──
+
+  // Test a single CSS declaration. Returns true if the browser accepts it.
+  function testCSS(declaration) {
+    var el = document.createElement('div');
+    el.style.cssText = declaration;
+    return el.style.cssText.length > 0;
+  }
+
   function detectEnvironment() {
     addEntry('INFO', '=== Kindle Debug Tools Loaded ===');
     addEntry('INFO', 'UA: ' + navigator.userAgent);
@@ -243,44 +322,44 @@
     addEntry('INFO', 'Viewport: ' + window.innerWidth + 'x' + window.innerHeight);
     addEntry('INFO', 'DPR: ' + (window.devicePixelRatio || 'N/A'));
 
-    // CSS feature checks
-    var tests = {
-      'CSS Grid': 'display: grid',
-      'CSS Custom Props': '--test: 1',
-      'CSS Transform': 'transform: rotate(0deg)',
-      'CSS Animation': 'animation: none'
-    };
+    // CSS feature checks — test both unprefixed and -webkit- variants
+    var cssTests = [
+      ['display: flex',              'display: -webkit-flex',             'display: -webkit-box',    'Flexbox'],
+      ['display: grid',              null,                                null,                      'CSS Grid'],
+      ['--test: 1',                  null,                                null,                      'Custom Props'],
+      ['transform: rotate(0deg)',    '-webkit-transform: rotate(0deg)',   null,                      'Transform'],
+      ['animation: none',            '-webkit-animation: none',           null,                      'Animation'],
+      ['position: fixed',            null,                                null,                      'Position Fixed'],
+      ['width: 100vh',               null,                                null,                      'Viewport Units']
+    ];
 
-    var testEl = document.createElement('div');
-    document.body.appendChild(testEl);
+    for (var i = 0; i < cssTests.length; i++) {
+      var row = cssTests[i];
+      var label = row[row.length - 1];
+      var result = 'NO';
 
-    for (var name in tests) {
-      if (tests.hasOwnProperty(name)) {
-        testEl.style.cssText = tests[name];
-        // If the browser understood it, the computed style should reflect it
-        var computed = window.getComputedStyle(testEl);
-        var prop = tests[name].split(':')[0].replace('--test', 'display');
-        var supported = testEl.style.cssText.length > 0;
-        addEntry('INFO', name + ': ' + (supported ? 'YES' : 'NO'));
+      for (var j = 0; j < row.length - 1; j++) {
+        if (row[j] && testCSS(row[j])) {
+          result = (j === 0) ? 'YES' : 'YES (via ' + row[j].split(':')[0] + ')';
+          break;
+        }
       }
+
+      addEntry('INFO', label + ': ' + result);
     }
 
-    document.body.removeChild(testEl);
-
     // JS feature checks
-    var jsFeatures = {
-      'JSON': typeof JSON !== 'undefined',
-      'querySelector': typeof document.querySelector === 'function',
-      'addEventListener': typeof document.addEventListener === 'function',
-      'getComputedStyle': typeof window.getComputedStyle === 'function',
-      'XMLHttpRequest': typeof XMLHttpRequest !== 'undefined',
-      'classList': document.documentElement.classList !== undefined
-    };
+    var jsFeatures = [
+      ['JSON',             typeof JSON !== 'undefined'],
+      ['querySelector',    typeof document.querySelector === 'function'],
+      ['addEventListener', typeof document.addEventListener === 'function'],
+      ['getComputedStyle', typeof window.getComputedStyle === 'function'],
+      ['XMLHttpRequest',   typeof XMLHttpRequest !== 'undefined'],
+      ['classList',        document.documentElement.classList !== undefined]
+    ];
 
-    for (var feat in jsFeatures) {
-      if (jsFeatures.hasOwnProperty(feat)) {
-        addEntry('INFO', feat + ': ' + (jsFeatures[feat] ? 'YES' : 'NO'));
-      }
+    for (var k = 0; k < jsFeatures.length; k++) {
+      addEntry('INFO', jsFeatures[k][0] + ': ' + (jsFeatures[k][1] ? 'YES' : 'NO'));
     }
   }
 
@@ -320,7 +399,8 @@
     if (rootEl) {
       var rootStyle = window.getComputedStyle(rootEl);
       addEntry('INFO', 'root size: ' + rootStyle.width + ' x ' + rootStyle.height);
-      addEntry('INFO', 'root transform: ' + rootStyle.transform);
+      var tf = rootStyle.transform || rootStyle.webkitTransform || rootStyle.getPropertyValue('-webkit-transform') || 'N/A';
+      addEntry('INFO', 'root transform: ' + tf);
     }
 
     // Send everything to POST bin if configured
