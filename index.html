@@ -363,7 +363,7 @@ html, body {
  *
  * Design goals:
  * - Minimal JS execution (runs every 15 mins for recalibration)
- * - Clock hands driven by CSS stepped animation
+ * - Clock hands driven by CSS stepped animation between recalibrations
  * - Calendar re-renders only when date changes
  * - Touch to cycle views, auto-return after 30s
  * - ES5-safe for Kindle WebKit 534.26 browser
@@ -384,9 +384,9 @@ html, body {
   var currentView      = 0;
   var totalViews       = 2;
   var autoReturnTimer  = null;
-  var recalibrateTimer = null;
   var lastDateStr      = '';
   var animStyleEl      = null;  // <style> element for injected keyframes
+  var animCycle        = 0;     // alternates 0/1 to force animation restart
 
   // ── DOM refs ──
   var hourHand   = document.getElementById('hourHand');
@@ -423,15 +423,18 @@ html, body {
   function getMinuteAngle(m) { return m * 6; }
   function getHourAngle(h, m)  { return (h % 12) * 30 + m * 0.5; }
 
-  // Inject @-webkit-keyframes dynamically since CSS custom properties
-  // are not available. Replaces the <style> element each recalibration.
+  // Inject @-webkit-keyframes dynamically. Animation names alternate
+  // between 'h-a'/'m-a' and 'h-b'/'m-b' each recalibration so the
+  // browser always sees a *new* animation and is forced to restart it.
+  // (Old WebKit silently ignores re-application of the same name.)
   function injectKeyframes(minuteStart, minuteEnd, hourStart, hourEnd) {
+    var s = animCycle ? 'a' : 'b';
     var css =
-      '@-webkit-keyframes minute-rotate {' +
+      '@-webkit-keyframes m-' + s + ' {' +
         ' from { -webkit-transform: rotate(' + minuteStart + 'deg); }' +
         ' to   { -webkit-transform: rotate(' + minuteEnd + 'deg); }' +
       ' }' +
-      ' @-webkit-keyframes hour-rotate {' +
+      ' @-webkit-keyframes h-' + s + ' {' +
         ' from { -webkit-transform: rotate(' + hourStart + 'deg); }' +
         ' to   { -webkit-transform: rotate(' + hourEnd + 'deg); }' +
       ' }';
@@ -465,25 +468,32 @@ html, body {
     var elapsedInBlock = blockMinute * 60 + now.getSeconds();
     var delayValue     = '-' + elapsedInBlock + 's';
 
-    // Remove animated class to force re-trigger
-    hourHand.className   = 'clock-hand hour-hand';
-    minuteHand.className = 'clock-hand minute-hand';
+    // Toggle animation cycle so the name changes each recalibration
+    animCycle = 1 - animCycle;
+    var s = animCycle ? 'a' : 'b';
 
-    // Inject new keyframes with the actual angle values
+    // 1. Clear existing animation (critical for old WebKit restart)
+    hourHand.style.cssText   = '';
+    minuteHand.style.cssText = '';
+
+    // 2. Force reflow so the browser processes the removal
+    void hourHand.offsetWidth;
+
+    // 3. Inject new keyframes with fresh animation names
     injectKeyframes(minuteStartAngle, minuteEndAngle, hourStartAngle, hourEndAngle);
 
-    // Set animation delay as inline style (no custom properties)
+    // 4. Apply animation with a static -webkit-transform fallback.
+    //    If the animation runs, it overrides the transform. If it fails
+    //    (e.g. steps() unsupported), the static transform shows the
+    //    correct current position as a graceful degradation.
     hourHand.style.cssText =
-      '-webkit-animation: hour-rotate 900s steps(3, end) 1 forwards;' +
+      '-webkit-transform: rotate(' + getHourAngle(h, m) + 'deg);' +
+      '-webkit-animation: h-' + s + ' 900s steps(3, end) 1 forwards;' +
       '-webkit-animation-delay: ' + delayValue + ';';
     minuteHand.style.cssText =
-      '-webkit-animation: minute-rotate 900s steps(15, end) 1 forwards;' +
+      '-webkit-transform: rotate(' + getMinuteAngle(m) + 'deg);' +
+      '-webkit-animation: m-' + s + ' 900s steps(15, end) 1 forwards;' +
       '-webkit-animation-delay: ' + delayValue + ';';
-
-    // Force reflow then re-add animation class
-    void hourHand.offsetWidth;
-    hourHand.className   = 'clock-hand hour-hand animated';
-    minuteHand.className = 'clock-hand minute-hand animated';
   }
 
   // ── Calendar rendering ──
@@ -610,11 +620,14 @@ html, body {
 
   // ── Touch handling ──
   // Tap anywhere to cycle between views.
+  // Also recalibrates the clock — if the Kindle was asleep and the
+  // setTimeout chain didn't fire, this corrects the hands immediately.
   function onTouch(e) {
     // Prevent double-firing
     if (e.type === 'touchstart') {
       e.preventDefault();
     }
+    recalibrate();
     nextView();
   }
 
@@ -622,13 +635,15 @@ html, body {
   root.addEventListener('click', onTouch, false);
 
   // ── Recalibration ──
-  // Runs every 15 minutes: resets clock animation, checks date change
+  // Runs every 15 minutes: restarts clock animation, checks date change
   function recalibrate() {
     setClock();
     renderDate();
   }
 
   // ── Align recalibration to the next 15-minute boundary ──
+  // Uses a setTimeout chain instead of setInterval so that each tick
+  // re-aligns to the clock — recovers cleanly after device sleep.
   function scheduleRecalibration() {
     var now = new Date();
     var m = now.getMinutes();
@@ -639,10 +654,17 @@ html, body {
     var minutesUntil = 15 - (m % 15);
     var msUntil = (minutesUntil * 60 - s) * 1000 - ms;
 
-    // First recalibration aligns to the boundary, then every 15 mins
-    setTimeout(function() {
+    setTimeout(function tick() {
       recalibrate();
-      recalibrateTimer = setInterval(recalibrate, RECALIBRATE_MS);
+      // Re-align to the next 15-min boundary (don't assume exact timing)
+      var now2 = new Date();
+      var m2 = now2.getMinutes();
+      var s2 = now2.getSeconds();
+      var ms2 = now2.getMilliseconds();
+      var minNext = 15 - (m2 % 15);
+      var msNext = (minNext * 60 - s2) * 1000 - ms2;
+      if (msNext <= 0) msNext += RECALIBRATE_MS;
+      setTimeout(tick, msNext);
     }, msUntil);
   }
 
@@ -657,6 +679,11 @@ html, body {
     setClock();
     renderDots();
     scheduleRecalibration();
+
+    // Recalibrate when the page comes back from bfcache or regains focus.
+    // Catches cases where the Kindle browser suspended JS timers.
+    window.addEventListener('pageshow', recalibrate, false);
+    window.addEventListener('focus', recalibrate, false);
   }
 
   init();
