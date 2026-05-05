@@ -446,10 +446,32 @@ html, body {
     animStyleEl.textContent = css;
   }
 
-  function setClock() {
+  // Returns the UK UTC offset in minutes (0 for GMT, 60 for BST).
+  // BST runs from the last Sunday in March at 01:00 UTC to the last Sunday
+  // in October at 01:00 UTC. Computed from UTC so it works regardless of
+  // whatever timezone the Kindle device is configured with.
+  function getUKOffsetMinutes(utcMs) {
+    var d = new Date(utcMs);
+    var y = d.getUTCFullYear();
+    var marchSun = new Date(Date.UTC(y, 2, 31));
+    marchSun.setUTCDate(31 - marchSun.getUTCDay());
+    marchSun.setUTCHours(1, 0, 0, 0);
+    var octSun = new Date(Date.UTC(y, 9, 31));
+    octSun.setUTCDate(31 - octSun.getUTCDay());
+    octSun.setUTCHours(1, 0, 0, 0);
+    return (utcMs >= marchSun.getTime() && utcMs < octSun.getTime()) ? 60 : 0;
+  }
+
+  // Returns a Date whose getUTC* methods yield the correct UK local time.
+  function getLocalNow() {
     var now = new Date();
-    var h   = now.getHours();
-    var m   = now.getMinutes();
+    return new Date(now.getTime() + getUKOffsetMinutes(now.getTime()) * 60000);
+  }
+
+  function setClock() {
+    var now = getLocalNow();
+    var h   = now.getUTCHours();
+    var m   = now.getUTCMinutes();
 
     // Work out where we are in the current 15-minute block
     var blockMinute  = m % 15;                        // 0-14 within the block
@@ -465,7 +487,7 @@ html, body {
     var hourEndAngle   = getHourAngle(h, blockEnd);
 
     // How far into the 900s animation are we? (negative delay = skip ahead)
-    var elapsedInBlock = blockMinute * 60 + now.getSeconds();
+    var elapsedInBlock = blockMinute * 60 + now.getUTCSeconds();
     var delayValue     = '-' + elapsedInBlock + 's';
 
     // Toggle animation cycle so the name changes each recalibration
@@ -505,10 +527,10 @@ html, body {
     // getDay() returns 0=Sun. Convert to Mon=0
     var startDow = (firstDay.getDay() + 6) % 7;
 
-    var today = new Date();
-    var todayDate = today.getDate();
-    var todayMonth = today.getMonth();
-    var todayYear = today.getFullYear();
+    var today = getLocalNow();
+    var todayDate = today.getUTCDate();
+    var todayMonth = today.getUTCMonth();
+    var todayYear = today.getUTCFullYear();
 
     var html = '<div class="calendar-header">' + MONTHS_FULL[month] + ' ' + year + '</div>';
     html += '<table class="calendar-table"><tr>';
@@ -552,9 +574,9 @@ html, body {
   }
 
   function renderCalendars() {
-    var now = new Date();
-    var year = now.getFullYear();
-    var month = now.getMonth();
+    var now = getLocalNow();
+    var year = now.getUTCFullYear();
+    var month = now.getUTCMonth();
 
     renderCalendar(calCurrent, year, month, true);
 
@@ -567,15 +589,15 @@ html, body {
 
   // ── Date display ──
   function renderDate() {
-    var now = new Date();
-    var dateStr = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+    var now = getLocalNow();
+    var dateStr = now.getUTCFullYear() + '-' + pad(now.getUTCMonth() + 1) + '-' + pad(now.getUTCDate());
 
     // Only re-render if the date actually changed
     if (dateStr === lastDateStr) return;
     lastDateStr = dateStr;
 
-    dateDayEl.textContent = DAYS_FULL[now.getDay()];
-    dateFullEl.textContent = now.getDate() + ' ' + MONTHS_FULL[now.getMonth()] + ' ' + now.getFullYear();
+    dateDayEl.textContent = DAYS_FULL[now.getUTCDay()];
+    dateFullEl.textContent = now.getUTCDate() + ' ' + MONTHS_FULL[now.getUTCMonth()] + ' ' + now.getUTCFullYear();
 
     // Re-render calendars when the date changes
     renderCalendars();
