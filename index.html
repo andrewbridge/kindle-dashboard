@@ -355,6 +355,13 @@ html, body {
     <div class="back-hint">Tap to return, or auto-returns in 30s</div>
   </div>
 
+  <!-- Diagnostic view -->
+  <div class="view secondary-view" id="view-2">
+    <h2>Diagnostics</h2>
+    <div id="diag-output" style="font-size:18px; line-height:1.8;"></div>
+    <div class="back-hint">Tap to return, or auto-returns in 30s</div>
+  </div>
+
 </div>
 
 <script>
@@ -382,7 +389,7 @@ html, body {
 
   // ── State ──
   var currentView      = 0;
-  var totalViews       = 2;
+  var totalViews       = 3;
   var autoReturnTimer  = null;
   var lastDateStr      = '';
   var animStyleEl      = null;  // <style> element for injected keyframes
@@ -397,6 +404,7 @@ html, body {
   var calNext    = document.getElementById('cal-next');
   var viewDots   = document.getElementById('viewDots');
   var root       = document.getElementById('root');
+  var diagOutput = document.getElementById('diag-output');
 
   // ── Utility ──
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
@@ -446,32 +454,10 @@ html, body {
     animStyleEl.textContent = css;
   }
 
-  // Returns the UK UTC offset in minutes (0 for GMT, 60 for BST).
-  // BST runs from the last Sunday in March at 01:00 UTC to the last Sunday
-  // in October at 01:00 UTC. Computed from UTC so it works regardless of
-  // whatever timezone the Kindle device is configured with.
-  function getUKOffsetMinutes(utcMs) {
-    var d = new Date(utcMs);
-    var y = d.getUTCFullYear();
-    var marchSun = new Date(Date.UTC(y, 2, 31));
-    marchSun.setUTCDate(31 - marchSun.getUTCDay());
-    marchSun.setUTCHours(1, 0, 0, 0);
-    var octSun = new Date(Date.UTC(y, 9, 31));
-    octSun.setUTCDate(31 - octSun.getUTCDay());
-    octSun.setUTCHours(1, 0, 0, 0);
-    return (utcMs >= marchSun.getTime() && utcMs < octSun.getTime()) ? 60 : 0;
-  }
-
-  // Returns a Date whose getUTC* methods yield the correct UK local time.
-  function getLocalNow() {
-    var now = new Date();
-    return new Date(now.getTime() + getUKOffsetMinutes(now.getTime()) * 60000);
-  }
-
   function setClock() {
-    var now = getLocalNow();
-    var h   = now.getUTCHours();
-    var m   = now.getUTCMinutes();
+    var now = new Date();
+    var h   = now.getHours();
+    var m   = now.getMinutes();
 
     // Work out where we are in the current 15-minute block
     var blockMinute  = m % 15;                        // 0-14 within the block
@@ -487,7 +473,7 @@ html, body {
     var hourEndAngle   = getHourAngle(h, blockEnd);
 
     // How far into the 900s animation are we? (negative delay = skip ahead)
-    var elapsedInBlock = blockMinute * 60 + now.getUTCSeconds();
+    var elapsedInBlock = blockMinute * 60 + now.getSeconds();
     var delayValue     = '-' + elapsedInBlock + 's';
 
     // Toggle animation cycle so the name changes each recalibration
@@ -527,10 +513,10 @@ html, body {
     // getDay() returns 0=Sun. Convert to Mon=0
     var startDow = (firstDay.getDay() + 6) % 7;
 
-    var today = getLocalNow();
-    var todayDate = today.getUTCDate();
-    var todayMonth = today.getUTCMonth();
-    var todayYear = today.getUTCFullYear();
+    var today = new Date();
+    var todayDate = today.getDate();
+    var todayMonth = today.getMonth();
+    var todayYear = today.getFullYear();
 
     var html = '<div class="calendar-header">' + MONTHS_FULL[month] + ' ' + year + '</div>';
     html += '<table class="calendar-table"><tr>';
@@ -574,9 +560,9 @@ html, body {
   }
 
   function renderCalendars() {
-    var now = getLocalNow();
-    var year = now.getUTCFullYear();
-    var month = now.getUTCMonth();
+    var now = new Date();
+    var year = now.getFullYear();
+    var month = now.getMonth();
 
     renderCalendar(calCurrent, year, month, true);
 
@@ -587,17 +573,30 @@ html, body {
     renderCalendar(calNext, nextYear, nextMonth, false);
   }
 
+  // ── Diagnostics ──
+  function renderDiagnostics() {
+    var d = new Date();
+    var lines = [
+      'toString:         ' + d.toString(),
+      'getHours:         ' + d.getHours(),
+      'getUTCHours:      ' + d.getUTCHours(),
+      'getTimezoneOffset:' + d.getTimezoneOffset(),
+      'toLocaleString:   ' + d.toLocaleString()
+    ];
+    diagOutput.innerHTML = lines.join('<br>');
+  }
+
   // ── Date display ──
   function renderDate() {
-    var now = getLocalNow();
-    var dateStr = now.getUTCFullYear() + '-' + pad(now.getUTCMonth() + 1) + '-' + pad(now.getUTCDate());
+    var now = new Date();
+    var dateStr = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
 
     // Only re-render if the date actually changed
     if (dateStr === lastDateStr) return;
     lastDateStr = dateStr;
 
-    dateDayEl.textContent = DAYS_FULL[now.getUTCDay()];
-    dateFullEl.textContent = now.getUTCDate() + ' ' + MONTHS_FULL[now.getUTCMonth()] + ' ' + now.getUTCFullYear();
+    dateDayEl.textContent = DAYS_FULL[now.getDay()];
+    dateFullEl.textContent = now.getDate() + ' ' + MONTHS_FULL[now.getMonth()] + ' ' + now.getFullYear();
 
     // Re-render calendars when the date changes
     renderCalendars();
@@ -623,6 +622,7 @@ html, body {
     }
     currentView = index;
     renderDots();
+    if (index === 2) renderDiagnostics();
   }
 
   function nextView() {
