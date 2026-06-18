@@ -355,6 +355,13 @@ html, body {
     <div class="back-hint">Tap to return, or auto-returns in 30s</div>
   </div>
 
+  <!-- Diagnostic view -->
+  <div class="view secondary-view" id="view-2">
+    <h2>Diagnostics</h2>
+    <div id="diag-output" style="font-size:18px; line-height:1.8;"></div>
+    <div class="back-hint">Tap to return, or auto-returns in 30s</div>
+  </div>
+
 </div>
 
 <script>
@@ -382,7 +389,7 @@ html, body {
 
   // ── State ──
   var currentView      = 0;
-  var totalViews       = 2;
+  var totalViews       = 3;
   var autoReturnTimer  = null;
   var lastDateStr      = '';
   var animStyleEl      = null;  // <style> element for injected keyframes
@@ -397,6 +404,7 @@ html, body {
   var calNext    = document.getElementById('cal-next');
   var viewDots   = document.getElementById('viewDots');
   var root       = document.getElementById('root');
+  var diagOutput = document.getElementById('diag-output');
 
   // ── Utility ──
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
@@ -583,6 +591,19 @@ html, body {
     renderCalendar(calNext, nextYear, nextMonth, false);
   }
 
+  // ── Diagnostics ──
+  function renderDiagnostics() {
+    var d = new Date();
+    var lines = [
+      'toString:         ' + d.toString(),
+      'getHours:         ' + d.getHours(),
+      'getUTCHours:      ' + d.getUTCHours(),
+      'getTimezoneOffset:' + d.getTimezoneOffset(),
+      'toLocaleString:   ' + d.toLocaleString()
+    ];
+    diagOutput.innerHTML = lines.join('<br>');
+  }
+
   // ── Date display ──
   function renderDate() {
     var now = getLondonNow();
@@ -619,6 +640,7 @@ html, body {
     }
     currentView = index;
     renderDots();
+    if (index === 2) renderDiagnostics();
   }
 
   function nextView() {
